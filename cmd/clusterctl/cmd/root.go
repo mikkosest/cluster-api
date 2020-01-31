@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,44 +18,100 @@ package cmd
 
 import (
 	"flag"
-	"fmt"
 	"os"
+	"strings"
 
+	"github.com/MakeNowJust/heredoc"
 	"github.com/spf13/cobra"
-	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog"
 )
 
+var cfgFile string
+
 var RootCmd = &cobra.Command{
-	Use:   "clusterctl",
-	Short: "cluster management",
-	Long:  `Simple kubernetes cluster management`,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		cmd.Flags().Set("logtostderr", "true")
-	},
-	Run: func(cmd *cobra.Command, args []string) {
-		// Do Stuff Here
-		cmd.Help()
-	},
+	Use:          "clusterctl",
+	SilenceUsage: true,
+	Short:        "clusterctl controls a management cluster for Cluster API",
+	Long: LongDesc(`
+		Get started with Cluster API using clusterctl for initializing a management cluster by installing
+		Cluster API providers, and then use clusterctl for creating yaml templates for your workload clusters.`),
 }
 
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		//TODO: print error stack if log v>0
+		//TODO: print cmd help if validation error
 		os.Exit(1)
 	}
 }
 
-func exitWithHelp(cmd *cobra.Command, err string) {
-	fmt.Fprintln(os.Stderr, err)
-	cmd.Help()
-	os.Exit(1)
+func init() {
+
+	klog.InitFlags(flag.CommandLine)
+	RootCmd.PersistentFlags().AddGoFlagSet(flag.CommandLine)
+
+	// hiding all the klog flags except
+	// --log_dir
+	// --log_file
+	// --log_file_max_size
+	// -v, --v Level
+
+	_ = RootCmd.PersistentFlags().MarkHidden("alsologtostderr")
+	_ = RootCmd.PersistentFlags().MarkHidden("log_backtrace_at")
+	_ = RootCmd.PersistentFlags().MarkHidden("logtostderr")
+	_ = RootCmd.PersistentFlags().MarkHidden("stderrthreshold")
+	_ = RootCmd.PersistentFlags().MarkHidden("vmodule")
+	_ = RootCmd.PersistentFlags().MarkHidden("skip_log_headers")
+	_ = RootCmd.PersistentFlags().MarkHidden("skip_headers")
+	_ = RootCmd.PersistentFlags().MarkHidden("add_dir_header")
+
+	// makes logs look nicer for a CLI app
+	_ = RootCmd.PersistentFlags().Set("skip_headers", "true")
+	_ = RootCmd.PersistentFlags().Set("logtostderr", "true")
+
+	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "Path to the the clusterctl config file (default is $HOME/.cluster-api/clusterctl.yaml)")
 }
 
-func init() {
-	klog.InitFlags(flag.CommandLine)
-	flag.CommandLine.Set("logtostderr", "true")
-	RootCmd.SetGlobalNormalizationFunc(cliflag.WordSepNormalizeFunc)
-	RootCmd.PersistentFlags().AddGoFlagSet(flag.CommandLine)
-	InitLogs()
+const Indentation = `  `
+
+// LongDesc normalizes a command's long description to follow the conventions.
+func LongDesc(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	return normalizer{s}.heredoc().trim().string
+}
+
+// Examples normalizes a command's examples to follow the conventions.
+func Examples(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	return normalizer{s}.trim().indent().string
+}
+
+type normalizer struct {
+	string
+}
+
+func (s normalizer) heredoc() normalizer {
+	s.string = heredoc.Doc(s.string)
+	return s
+}
+
+func (s normalizer) trim() normalizer {
+	s.string = strings.TrimSpace(s.string)
+	return s
+}
+
+func (s normalizer) indent() normalizer {
+	splitLines := strings.Split(s.string, "\n")
+	indentedLines := make([]string, 0, len(splitLines))
+	for _, line := range splitLines {
+		trimmed := strings.TrimSpace(line)
+		indented := Indentation + trimmed
+		indentedLines = append(indentedLines, indented)
+	}
+	s.string = strings.Join(indentedLines, "\n")
+	return s
 }

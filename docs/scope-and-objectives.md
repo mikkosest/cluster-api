@@ -1,5 +1,26 @@
 ---
 title: Cluster API Scope and Objectives
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
+
+- [Cluster API Scope and Objectives](#cluster-api-scope-and-objectives)
+  - [Table of Contents](#table-of-contents)
+  - [Summary](#summary)
+      - [What is Cluster API?](#what-is-cluster-api)
+  - [Glossary](#glossary)
+  - [Motivation](#motivation)
+    - [Goals](#goals)
+    - [Non-goals](#non-goals)
+  - [Requirements](#requirements)
+      - [Foundation](#foundation)
+      - [User Experience](#user-experience)
+      - [Organization](#organization)
+      - [Validation](#validation)
+      - [Extension](#extension)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 authors:
   - "@vincepri"
   - "@ncdc"
@@ -63,6 +84,9 @@ We are building a set of Kubernetes cluster management APIs to enable common clu
 Kubernetes has a common set of APIs (see the [Kubernetes API Conventions](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md)) to orchestrate containers regardless of deployment mechanism or cloud provider. Kubernetes also has APIs for handling some infrastructure, like load-balancers, ingress rules, or persistent volumes, but not for creating new machines.
 As a result, existing popular deployment mechanisms that manage Kubernetes clusters each have unique APIs and implementations for how to handle lifecycle events like cluster creation or deletion, control plane upgrades, and node upgrades.
 
+
+<!-- ANCHOR: Goals -->
+
 ### Goals
 
 - To manage the lifecycle (create, scale, upgrade, destroy) of Kubernetes-conformant clusters using a declarative API.
@@ -81,6 +105,8 @@ As a result, existing popular deployment mechanisms that manage Kubernetes clust
 - To manage a single cluster spanning multiple infrastructure providers.
 - To configure a machine at any time other than create or upgrade.
 - To duplicate functionality that exists or is coming to other tooling, e.g., updating kubelet configuration (c.f. dynamic kubelet configuration), or updating apiserver, controller-manager, scheduler configuration (c.f. component-config effort) after the cluster is deployed.
+
+<!-- ANCHOR_END: Goals -->
 
 ## Requirements
 

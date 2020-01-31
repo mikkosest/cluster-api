@@ -1,0 +1,13 @@
+.git
+.github
+.vscode
+bin/
+**/*.yaml
+hack/
+docs/
+logos/
+scripts/
+**/*.md
+tilt-settings.json
+tilt.d/
+Tiltfile

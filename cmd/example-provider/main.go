@@ -18,57 +18,69 @@ package main
 
 import (
 	"flag"
+	"os"
 
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog"
-	clusterapis "sigs.k8s.io/cluster-api/pkg/apis"
-	"sigs.k8s.io/cluster-api/pkg/apis/cluster/common"
-	"sigs.k8s.io/cluster-api/pkg/client/clientset_generated/clientset"
-	capicluster "sigs.k8s.io/cluster-api/pkg/controller/cluster"
-	capimachine "sigs.k8s.io/cluster-api/pkg/controller/machine"
-	"sigs.k8s.io/cluster-api/pkg/provider/example/actuators/cluster"
-	"sigs.k8s.io/cluster-api/pkg/provider/example/actuators/machine"
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/controllers"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 )
 
 func main() {
 	klog.InitFlags(nil)
-	flag.Set("logtostderr", "true")
+	var enableLeaderElection bool
+	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
+		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
+	var metricsAddr string
+	var healthAddr string
+	flag.StringVar(&metricsAddr, "metrics-addr", ":8080",
+		"The address the metric endpoint binds to.")
+	flag.StringVar(&healthAddr, "health-addr", ":9440",
+		"The address the health endpoint binds to.")
 	flag.Parse()
 
-	cfg := config.GetConfigOrDie()
+	cfg := ctrl.GetConfigOrDie()
 
 	// Setup a Manager
-	mgr, err := manager.New(cfg, manager.Options{})
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:                 scheme.Scheme,
+		LeaderElection:         enableLeaderElection,
+		MetricsBindAddress:     metricsAddr,
+		HealthProbeBindAddress: healthAddr,
+	})
 	if err != nil {
 		klog.Fatalf("Failed to set up controller manager: %v", err)
 	}
 
-	cs, err := clientset.NewForConfig(cfg)
-	if err != nil {
-		klog.Fatalf("Failed to create client from configuration: %v", err)
-	}
-
-	recorder := mgr.GetEventRecorderFor("clusterapi-controller")
-
-	// Initialize cluster actuator.
-	clusterActuator, _ := cluster.NewClusterActuator(cs.ClusterV1alpha1(), recorder)
-
-	// Initialize machine actuator.
-	machineActuator, _ := machine.NewMachineActuator(cs.ClusterV1alpha1(), recorder)
-
-	// Register cluster deployer
-	common.RegisterClusterProvisioner("example", clusterActuator)
-
-	if err := clusterapis.AddToScheme(mgr.GetScheme()); err != nil {
+	if err := clusterv1.AddToScheme(mgr.GetScheme()); err != nil {
 		klog.Fatal(err)
 	}
 
-	capimachine.AddWithActuator(mgr, machineActuator)
-	capicluster.AddWithActuator(mgr, clusterActuator)
+	if err = (&controllers.ClusterReconciler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("Cluster"),
+	}).SetupWithManager(mgr, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		os.Exit(1)
+	}
+	if err = (&controllers.MachineReconciler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("Machine"),
+	}).SetupWithManager(mgr, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		os.Exit(1)
+	}
 
-	if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
+	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
+		klog.Fatalf("unable to create health check: %v", err)
+	}
+
+	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+		klog.Fatalf("unable to create health check: %v", err)
+	}
+
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		klog.Fatalf("Failed to run manager: %v", err)
 	}
 }

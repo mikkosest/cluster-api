@@ -1,17 +1,9 @@
-# Adds namespace to all resources.
-namespace: cluster-api-system
+# The default kustomization bundles up all the "batteries included" capi resources.
+# Both core-capi, as well as bootstrap/controlplane components
 
-# Value of this field is prepended to the
-# names of all resources, e.g. a deployment named
-# "wordpress" becomes "alices-wordpress".
-# Note that it should also match with the prefix (text before '-') of the namespace
-# field above.
-namePrefix: cluster-api-
+# Adds namespace to all resources.
+namespace: capi-system
 
 bases:
-- ../crds/
-- ../rbac/
-- ../manager/
-
-patches:
-- manager_image_patch.yaml
+## Vanilla capi components
+- ../core

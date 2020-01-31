@@ -18,24 +18,24 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
+REPO_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
+# shellcheck source=./hack/ensure-go.sh
+source "${REPO_ROOT}/hack/ensure-go.sh"
+
 MAKE="make"
-KIND_VERSION="v0.3.0"
-KUSTOMIZE_VERSION="2.0.3"
-KUBECTL_VERSION="v1.14.1"
+KIND_VERSION="v0.5.0"
+KUBECTL_VERSION="v1.15.3"
+KUSTOMIZE_VERSION="3.1.0"
 CRD_YAML="crd.yaml"
 BOOTSTRAP_CLUSTER_NAME="clusterapi-bootstrap"
 CONTROLLER_REPO="controller-ci" # use arbitrary repo name since we don't need to publish it
+CONTROLLER_REPO_KUBEADM_BOOTSTRAP="controller-ci-kubeadm-bootstrap"
+CONTROLLER_REPO_KUBEADM_CONTROL_PLANE="controller-ci-kubeadm-control-plane"
 EXAMPLE_PROVIDER_REPO="example-provider-ci"
-INTEGRATION_TEST_DIR="./test/integration"
+CERT_MANAGER_URL="https://github.com/jetstack/cert-manager/releases/download/v0.11.0/cert-manager.yaml"
 
 GOOS=$(go env GOOS)
 GOARCH=$(go env GOARCH)
-
-install_kustomize() {
-   wget "https://github.com/kubernetes-sigs/kustomize/releases/download/v${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_${GOOS}_${GOARCH}" \
-     --no-verbose -O /usr/local/bin/kustomize
-   chmod +x /usr/local/bin/kustomize
-}
 
 install_kind() {
    wget "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-${GOOS}-${GOARCH}" \
@@ -49,20 +49,34 @@ install_kubectl() {
    chmod +x /usr/local/bin/kubectl
 }
 
+install_kustomize() {
+  wget "https://github.com/kubernetes-sigs/kustomize/releases/download/v${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_${GOOS}_${GOARCH}" \
+    --no-verbose -O /usr/local/bin/kustomize
+    chmod +x /usr/local/bin/kustomize
+}
+
 build_containers() {
    VERSION="$(git describe --exact-match 2> /dev/null || git describe --match="$(git rev-parse --short=8 HEAD)" --always --dirty --abbrev=8)"
    export CONTROLLER_IMG="${CONTROLLER_REPO}"
+   export KUBEADM_BOOTSTRAP_CONTROLLER_IMG="${CONTROLLER_REPO_KUBEADM_BOOTSTRAP}"
+   export KUBEADM_CONTROL_PLANE_CONTROLLER_IMG="${CONTROLLER_REPO_KUBEADM_CONTROL_PLANE}"
    export EXAMPLE_PROVIDER_IMG="${EXAMPLE_PROVIDER_REPO}"
 
-   "${MAKE}" docker-build TAG="${VERSION}" ARCH="${GOARCH}"
-   "${MAKE}" docker-build-ci TAG="${VERSION}" ARCH="${GOARCH}"
+   "${MAKE}" docker-build TAG="${VERSION}" ARCH="${GOARCH}" PULL_POLICY=IfNotPresent
+   "${MAKE}" docker-build-example-provider TAG="${VERSION}" ARCH="${GOARCH}"
 }
 
 prepare_crd_yaml() {
    CLUSTER_API_CONFIG_PATH="./config"
    kustomize build "${CLUSTER_API_CONFIG_PATH}/default/" > "${CRD_YAML}"
-   echo "---" >> "${CRD_YAML}"
-   kustomize build "${CLUSTER_API_CONFIG_PATH}/ci/" >> "${CRD_YAML}"
+   {
+      echo "---"
+      kustomize build "./bootstrap/kubeadm/config/default"
+      echo "---"
+      kustomize build "./controlplane/kubeadm/config/default"
+      echo "---"
+      kustomize build "${CLUSTER_API_CONFIG_PATH}/ci/"
+   } >> "${CRD_YAML}"
 }
 
 create_bootstrap() {
@@ -71,11 +85,28 @@ create_bootstrap() {
    export KUBECONFIG
 
    kind load docker-image "${CONTROLLER_IMG}-${GOARCH}:${VERSION}" --name "${BOOTSTRAP_CLUSTER_NAME}"
+   kind load docker-image "${KUBEADM_BOOTSTRAP_CONTROLLER_IMG}-${GOARCH}:${VERSION}" --name "${BOOTSTRAP_CLUSTER_NAME}"
+   kind load docker-image "${KUBEADM_CONTROL_PLANE_CONTROLLER_IMG}-${GOARCH}:${VERSION}" --name "${BOOTSTRAP_CLUSTER_NAME}"
    kind load docker-image "${EXAMPLE_PROVIDER_IMG}-${GOARCH}:${VERSION}" --name "${BOOTSTRAP_CLUSTER_NAME}"
 }
 
 delete_bootstrap() {
    kind delete cluster --name "${BOOTSTRAP_CLUSTER_NAME}"
+}
+
+wait_deployment_available() {
+   retry=30
+   INTERVAL=6
+   until kubectl describe deployment "$1" -n "$2" | grep "1 available"
+   do
+      sleep ${INTERVAL};
+      retry=$((retry - 1))
+      if [[ $retry -lt 0 ]];
+      then
+         kubectl describe deployment "$1" -n "$2"
+         exit 1
+      fi;
+   done;
 }
 
 wait_pod_running() {
@@ -107,23 +138,23 @@ main() {
    ensure_docker_in_docker
    build_containers
 
-   install_kustomize
-   prepare_crd_yaml
-
    install_kubectl
    install_kind
+   install_kustomize
+   prepare_crd_yaml
    create_bootstrap
+
+   kubectl create -f "${CERT_MANAGER_URL}"
+   kubectl wait --for=condition=Available --timeout=5m apiservice v1beta1.webhook.cert-manager.io
 
    kubectl create -f "${CRD_YAML}"
 
    set +e
-   wait_pod_running "cluster-api-controller-manager-0" "cluster-api-system"
-   wait_pod_running "provider-controller-manager-0" "provider-system"
+   wait_deployment_available "capi-controller-manager" "capi-system"
+   wait_deployment_available "provider-controller-manager" "provider-system"
    set -e
 
-   if [[ -d "${INTEGRATION_TEST_DIR}" ]] ; then
-      go test -v "${INTEGRATION_TEST_DIR}"/...
-   fi
+   make test-integration
 
    delete_bootstrap
 
